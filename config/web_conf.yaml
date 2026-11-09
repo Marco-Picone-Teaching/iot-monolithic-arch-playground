@@ -1,3 +1,4 @@
+# Web Server configuration
 web:
   host: "0.0.0.0"
   port: 7071

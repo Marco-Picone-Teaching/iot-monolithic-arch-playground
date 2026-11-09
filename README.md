@@ -6,6 +6,61 @@ demonstrating a structured approach to building an IoT application using an
 each responsible for specific functionalities, ensuring modularity, 
 scalability, and maintainability.
 
+Reference Libraries: Flask & Flask-RESTful (Web Server and RESTful API) - Paho MQTT 2.x (MQTT Data Fetcher) - https://github.com/eclipse/paho.mqtt.python
+
+## Setup
+
+The project is managed with [uv](https://docs.astral.sh/uv/). Dependencies are declared in `pyproject.toml`,
+locked in `uv.lock`, and the Python version (3.12) is pinned in `.python-version`.
+
+- Dependencies: `flask` and `flask-restful` (Web Server and RESTful API), `paho-mqtt` 2.x (MQTT Data Fetcher and
+  MQTT testers), `pyyaml` (configuration files) and `requests` (HTTP testers)
+
+Install uv (if needed) following the [official instructions](https://docs.astral.sh/uv/getting-started/installation/), e.g.:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Then, from the project root, create the virtual environment (`.venv`) and install all the dependencies with:
+
+```bash
+uv sync
+```
+
+uv automatically downloads the required Python version if it is not available on your machine.
+The command also installs the `iot_monolithic_playground` package (in `src/`) in editable mode, together with a
+dedicated command for the application and for each tester (see [Running the Application](#running-the-application)).
+
+In PyCharm, you can select the existing `.venv` interpreter or add a new "uv" interpreter from the interpreter settings.
+
+### Using pip (alternative)
+
+The `requirements.txt` file is **generated** from `uv.lock` and is kept only for pip-based workflows:
+
+```bash
+pip install -r requirements.txt
+```
+
+Do not edit it manually. After changing the dependencies, regenerate it with:
+
+```bash
+uv export --no-hashes --no-dev -o requirements.txt
+```
+
+### MQTT Broker
+
+The MQTT Data Fetcher and the MQTT testers require a running MQTT Broker, configured in `config/mqtt_fetcher_conf.yaml`
+(default: `127.0.0.1:1883` without authentication). A local [Eclipse Mosquitto](https://mosquitto.org/) broker can be
+installed natively or started with Docker:
+
+```bash
+docker run -it --rm -p 1883:1883 eclipse-mosquitto:2 mosquitto -c /mosquitto-no-auth.conf
+```
+
+The application starts even if the broker is not available yet: the MQTT Data Fetcher keeps retrying the connection
+in the background, while the Web Server and the RESTful API are immediately available.
+
 ## n-Tier Architecture Overview
 
 Designing an n-Tier Software Architecture for an Internet of Things (IoT) 
@@ -157,99 +212,169 @@ and scalability, a closed layer architecture is preferred.
 
 ## File Structure Overview
 
-The project is structured into different directories, each representing a specific layer of the n-Tier architecture.
-The main folders and files of the project are as follows:
+The project follows the `src` layout: all the code is in the `iot_monolithic_playground` package, organized in one
+sub-package for each layer of the n-Tier architecture.
 
-- `presentation`: Contains the web interface components for the system
-- `communication`: Includes the web server, RESTful API, and MQTT data fetcher
-- `application`: Contains the core services of the application
-- `data`: Manages data access and interactions with the storage systems
-- `config`: Stores configuration files for the system
-- `test`: Includes test scripts for different components of the system to interact with the layers
-- `main.py`: Entry point of the application, orchestrating the interactions between different layers
+```
+iot-monolithic-arch-playground/
+├── pyproject.toml                      # Project metadata, dependencies and entry points
+├── uv.lock                             # Locked dependency versions (managed by uv)
+├── requirements.txt                    # Generated from uv.lock for pip users
+├── config/                             # Configuration files of the modules
+│   ├── api_conf.yaml                   # RESTful API Server (prefix, host, port)
+│   ├── web_conf.yaml                   # Web Server (host, port)
+│   └── mqtt_fetcher_conf.yaml          # MQTT Data Fetcher (broker, client id, credentials, topic)
+└── src/iot_monolithic_playground/
+    ├── main.py                         # Entry point: creates the layers and starts the modules
+    ├── presentation/                   # Presentation Layer: HTML templates
+    ├── communication/                  # Communication Layer
+    │   ├── web/                        # Web Server (Flask)
+    │   ├── api/                        # RESTful API (Flask-RESTful): server, resources and DTOs
+    │   └── mqtt/                       # MQTT Data Fetcher (Paho MQTT) and its DTO
+    ├── application/                    # Application Layer: Core Manager and domain models
+    ├── data/                           # Data Access Layer: Data Manager (in-memory storage)
+    ├── config/                         # ConfigLoader (reads the YAML files of config/)
+    └── tester/                         # External clients to test the application
+        ├── http/                       # HTTP clients of the RESTful API
+        └── mqtt/                       # Emulated MQTT devices and telemetry consumer
+```
 
 ### Presentation Layer
 
-The `presentation` directory contains the web interface components, including HTML, CSS, and JavaScript files for the user interface.
-Involved files at the moment are just simple HTML files, but in a real-world scenario, this directory would contain more complex web application files.
-Included files are:
+The `presentation` package contains the web interface components. They are simple HTML templates (rendered by Flask
+with Jinja2), while in a real-world scenario this layer would contain a complete web application:
 
-- `locations.html`: Displays registered device locations
-- `devices.html`: Lists registered devices and their details associated to a target location
-- `telemetry.html`: Shows telemetry data for a selected device
+- `locations.html`: Displays the registered locations
+- `devices.html`: Lists the registered devices of a target location and their details
+- `telemetry.html`: Shows the telemetry data of a selected device
 
 ### Communication Layer
 
-The `communication` directory includes the web server, RESTful API, and MQTT data fetcher components.
-These components handle incoming requests, expose system functionalities, and collect data from IoT devices.
-The files in this directory are:
+The `communication` package includes the web server, the RESTful API and the MQTT data fetcher. These components handle
+incoming requests, expose the system functionalities and collect data from IoT devices. Each one runs in a dedicated
+thread, so the three modules work in parallel inside the same process:
 
-This layer is composed by the following sub modules (and the associated folders):
+- `web`: Web Server implemented with Flask
+  - `web_server.py`: renders the templates of the Presentation Layer with the data provided by the Application Layer
+- `api`: RESTful API implemented with Flask-RESTful
+  - `rest_api_server.py`: defines the RESTful API endpoints
+  - `resources`: Flask-RESTful resources (locations, location, devices, device)
+  - `dto`: Data Transfer Objects (DTOs) of the requests and responses
+- `mqtt`: MQTT communication based on the Paho MQTT library (2.x)
+  - `mqtt_data_fetcher.py`: subscribes to the telemetry topic of the devices and forwards the data to the Application Layer
+  - `dto`: Data Transfer Object (DTO) of the telemetry messages
 
-- `web`: Contains the web server implementation using Flask
-  - `web_server.py`: Implements the web server using Flask and renders the web interface of the presentation layer
-- `api`: Implements the RESTful API endpoints for the system using Flask-RESTful
-  - `restful_api_server.py`: Defines the RESTful API endpoints for the system
-  - `resources`: Contains the resources for the RESTful API endpoints
-  - `dto`: Contains the Data Transfer Objects (DTOs) for the API
-- `mqtt`: Manages MQTT communication and data fetching using the Paho MQTT library
-  - `mqtt_data_fetcher.py`: Subscribes to MQTT topics and fetches telemetry data from IoT devices
-  - `dto`: Contains the Data Transfer Objects (DTOs) for MQTT data
+The Communication Layer converts the received DTOs (e.g., the `TelemetryMessage` received through MQTT) into the
+domain models of the Application Layer (e.g., `TelemetryModel`) before calling the Core Manager. In this way the lower
+layers never depend on the formats used by the Communication Layer, as required by the closed layer approach.
 
-## Testing 
+### Application Layer
 
-### Use MQTT Broker with Credentials
+The `application` package contains the business logic:
 
-The default code for the example has been designed to work with a local MQTT Broker.
-If you work with a different broker that require authentication with credentials and/or dedicated topic usage
-according to specific ACL (Access Contro List) configuration you have to:
+- `core_manager.py`: the `CoreManager`, the only entry point used by the Communication Layer. It delegates the data
+  operations to the Data Access Layer and implements the application logic, e.g., the telemetry of a device is stored
+  only if the device is registered;
+- `model`: the domain models (`LocationModel`, `DeviceModel`, `TelemetryModel`).
 
-- Change the `mqtt_data_fetcher.py` to support:
-  - Authentication 
-  - Topic Structure for the subscription
-- Change MQTT Tester application such as `test/mqtt-tester/json_producer_default_device.py` to support:
-  - Authentication 
-  - Topic Structure for publishing
+### Data Access Layer
 
-In both cases the MQTT Paho lines of code to specify the user credentials are:
+The `data` package contains the `DataManager`, that stores locations, devices and telemetry data. In this example the
+data is kept **in memory** (it is lost when the application stops) and the Data Storage Layer is not implemented.
 
-```python
-# Set Account Username & Password
-mqtt_client.username_pw_set(username, password)
+### Configuration
+
+Each module of the Communication Layer reads its parameters from a YAML file of the `config/` folder through the
+`ConfigLoader` class. A relative path (e.g., `config/api_conf.yaml`) is searched in the current working directory and
+then in the project root, so the application can be started from any folder. Parameters missing from a file keep their
+default values.
+
+| File                     | Parameters                                                                   |
+|--------------------------|------------------------------------------------------------------------------|
+| `api_conf.yaml`          | `rest.api_prefix`, `rest.host`, `rest.port` (default `7070`)                  |
+| `web_conf.yaml`          | `web.host`, `web.port` (default `7071`)                                       |
+| `mqtt_fetcher_conf.yaml` | `broker_ip`, `broker_port`, `client_id`, `username`, `password`, `target_telemetry_topic` |
+
+### Type Hints
+
+The code uses Python **type hints** (Python >= 3.10 syntax). To check the code with [mypy](https://mypy.readthedocs.io/) run:
+
+```bash
+uv run --with mypy mypy src/iot_monolithic_playground --ignore-missing-imports
 ```
 
-Then both in the subscription and publish parts you have to use the correct topic structure (if required by the broker).
+## Running the Application
 
-### Running the Application
+Each process is exposed as a command declared in the `[project.scripts]` section of `pyproject.toml`:
 
-In order to test the application you can run the `main.py` file that run the application activating 
-each layer of the architecture and run in parallel the different modules as independent threads.
+| Command                   | Module                                                       | Description                                      |
+|---------------------------|--------------------------------------------------------------|--------------------------------------------------|
+| `iot-monolith`            | `iot_monolithic_playground.main`                             | The monolithic application                       |
+| `mqtt-device-producer`    | `iot_monolithic_playground.tester.mqtt.json_producer`        | Emulated device publishing temperature telemetry |
+| `mqtt-telemetry-consumer` | `iot_monolithic_playground.tester.mqtt.json_consumer`        | Consumer printing the telemetry of all devices   |
+| `create-location`         | `iot_monolithic_playground.tester.http.create_location`      | Create a new location through the RESTful API    |
+| `create-device`           | `iot_monolithic_playground.tester.http.create_device`        | Create a new device through the RESTful API      |
 
-Once the application is running you can access the web interface by opening a web browser and navigating to the following URLs:
+With the MQTT Broker running, from the project root start the application:
 
-- [http://localhost:7071/locations](http://localhost:7071/locations): Displays registered device locations
-- [http://localhost:7071/devices](http://localhost:7071/devices): Lists registered devices and their details associated with a target location
-- [http://localhost:7071/telemetry](http://localhost:7071/telemetry): Shows telemetry data for a selected device
+```bash
+uv run iot-monolith
+```
 
-To simulate the data fetching from IoT devices, you can publish messages to the MQTT broker as an already registered device
-`d0001` using the script `test/mqtt/json_producer_default_device.py`.
+The application creates the layers from the bottom to the top (Data Manager, Core Manager and the three modules of the
+Communication Layer), starts the modules in their threads and runs until it is stopped with `CTRL+C`, which shuts down
+the MQTT Data Fetcher, the Web Server and the RESTful API.
 
-If you want to create additional devices or locations you can have a look at the following test scripts:
+The data manager is initialized with a demo location `l0001` and a demo device `d0001`. To simulate the device, in
+another terminal start an emulated device publishing on `device/d0001/temperature`:
 
-- `test/http/create_location.py`: Creates a new location using the RESTful API
-- `test/http/create_device_1.py`: Creates a new device using the RESTful API
-- `test/mqtt/json_producer_device_1.py`: Publishes telemetry data for an existing device
+```bash
+uv run mqtt-device-producer
+```
 
-Example of the Web Interface and Presentation Layer are the following:
+The telemetry of a device is stored only if the device is registered. To work with a new device, create it through
+the RESTful API and then start its emulated device:
 
-**Location List** available at [http://localhost:7071/locations](http://localhost:7071/locations)
+```bash
+uv run create-location l0002
+uv run create-device test_device_1 l0002
+uv run mqtt-device-producer test_device_1
+```
+
+The `mqtt-telemetry-consumer` command prints all the telemetry flowing through the broker, independently of the application.
+
+The RESTful API is available at `http://localhost:7070/api/iot/inventory`, e.g.:
+
+```bash
+curl http://localhost:7070/api/iot/inventory/location
+curl http://localhost:7070/api/iot/inventory/location/l0001/device
+curl "http://localhost:7070/api/iot/inventory/location/l0001/device?type=device.default"
+```
+
+The web interface of the Presentation Layer is available at the following URLs:
+
+- [http://localhost:7071/locations](http://localhost:7071/locations): registered locations
+- [http://localhost:7071/location/l0001/devices](http://localhost:7071/location/l0001/devices): devices of the location `l0001`
+- [http://localhost:7071/location/l0001/device/d0001/telemetry](http://localhost:7071/location/l0001/device/d0001/telemetry): telemetry of the device `d0001`
+
+**Location List**
 
 ![Location List](images/location_list.png)
 
-**Device List** available at [http://localhost:7071/devices](http://localhost:7071/devices)
+**Device List**
 
 ![Device List](images/device_list.png)
 
-**Telemetry Data List** available at [http://localhost:7071/telemetry](http://localhost:7071/telemetry)
+**Telemetry Data List**
 
-![Device List](images/telemetry_list.png)
+![Telemetry Data List](images/telemetry_list.png)
+
+### Use MQTT Broker with Credentials
+
+The default configuration works with a local MQTT Broker without authentication. To use a broker that requires
+credentials, set `username` and `password` in `config/mqtt_fetcher_conf.yaml`: they are used both by the MQTT Data
+Fetcher and by the MQTT testers, that read the broker parameters from the same file.
+
+If the broker also restricts the topics that each account can use (ACL), update the topic structure accordingly:
+the subscription filter `target_telemetry_topic` of the fetcher and the `topic_template` variable of the
+`json_producer.py` tester.

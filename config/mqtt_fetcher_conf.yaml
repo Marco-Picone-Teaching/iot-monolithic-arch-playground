@@ -1,5 +1,10 @@
+# MQTT Data Fetcher configuration
 broker_ip: "127.0.0.1"
 broker_port: 1883
+# Unique MQTT client id of the fetcher
+client_id: "iot-monolithic-playground-fetcher"
+# Optional credentials (null if the broker does not require authentication)
 username: null
 password: null
+# Topic filter of the device telemetry (device/<device_id>/temperature)
 target_telemetry_topic: "device/+/temperature"

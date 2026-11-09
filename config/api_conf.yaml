@@ -1,3 +1,4 @@
+# RESTful API Server configuration
 rest:
   api_prefix: "/api/iot/inventory"
   host: "0.0.0.0"
